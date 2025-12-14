@@ -285,7 +285,8 @@ export const drawTile = async (
     const drawnTile = deck[randomIndex];
     const remainingDeck = deck.filter((_, idx) => idx !== randomIndex);
 
-    // Actualizar jugador
+    // Actualizar jugador y devolver fichas al deck si se pasa
+    let updatedDeck = remainingDeck;
     const updatedPlayers = players.map(p => {
       if (p.id === playerId) {
         const newHand = [...p.hand, drawnTile];
@@ -294,16 +295,33 @@ export const drawTile = async (
         const total = handTotal + wildcardValue;
 
         let newStatus = p.status;
+        let finalHand = newHand;
+        let bustedHistory = p.bustedHistory || null;
+        
         if (total > 100) {
           newStatus = 'busted';
+          // Guardar historial antes de devolver fichas
+          bustedHistory = {
+            hand: newHand,
+            wildcardActive: p.wildcardActive,
+            wildcardValue: p.wildcardActive ? wildcardValue : 0,
+            total: total
+          };
+          // Devolver las fichas del jugador al deck (excepto el comodín)
+          // El comodín se queda en la mesa
+          updatedDeck = [...updatedDeck, ...newHand];
+          // Limpiar la mano del jugador visualmente
+          finalHand = [];
         } else if (total === 99 || total === 100) {
           newStatus = 'winner';
         }
 
         return {
           ...p,
-          hand: newHand,
+          hand: finalHand,
           status: newStatus,
+          wildcardActive: total > 100 ? false : p.wildcardActive, // Desactivar comodín si se pasa
+          bustedHistory: bustedHistory,
         };
       }
       return p;
@@ -341,7 +359,7 @@ export const drawTile = async (
 
       transaction.update(gameRef, {
         players: playersWithWinner,
-        deck: remainingDeck,
+        deck: updatedDeck,
         drawnTiles: arrayUnion(drawnTile),
         pot: 0,
         roundState: 'finished',
@@ -350,7 +368,7 @@ export const drawTile = async (
     } else {
       transaction.update(gameRef, {
         players: updatedPlayers,
-        deck: remainingDeck,
+        deck: updatedDeck,
         drawnTiles: arrayUnion(drawnTile),
         updatedAt: serverTimestamp(),
       });
@@ -378,6 +396,7 @@ export const toggleWildcard = async (
 
     const gameData = gameDoc.data() as Game;
     const players = gameData.players || [];
+    let updatedDeck = gameData.deck || [];
 
     const updatedPlayers = players.map(p => {
       if (p.id === playerId) {
@@ -387,8 +406,22 @@ export const toggleWildcard = async (
         const total = handTotal + wildcardValue;
 
         let newStatus = p.status;
+        let finalHand = p.hand;
+        let bustedHistory = p.bustedHistory || null;
+        
         if (total > 100) {
           newStatus = 'busted';
+          // Guardar historial antes de devolver fichas
+          bustedHistory = {
+            hand: p.hand,
+            wildcardActive: newWildcardActive,
+            wildcardValue: newWildcardActive ? wildcardValue : 0,
+            total: total
+          };
+          // Devolver las fichas del jugador al deck (el comodín se queda en la mesa)
+          updatedDeck = [...updatedDeck, ...p.hand];
+          // Limpiar la mano del jugador visualmente
+          finalHand = [];
         } else if (total === 99 || total === 100) {
           newStatus = 'winner';
         } else {
@@ -397,17 +430,57 @@ export const toggleWildcard = async (
 
         return {
           ...p,
-          wildcardActive: newWildcardActive,
+          hand: finalHand,
+          wildcardActive: total > 100 ? false : newWildcardActive,
           status: newStatus,
+          bustedHistory: bustedHistory,
         };
       }
       return p;
     });
 
-    transaction.update(gameRef, {
-      players: updatedPlayers,
-      updatedAt: serverTimestamp(),
-    });
+    // Verificar si hay un ganador con el toggle del wildcard
+    const hasDirectWinner = updatedPlayers.some(p => p.status === 'winner');
+    const activePlayers = updatedPlayers.filter(p => p.status !== 'busted');
+    const playersStillPlaying = activePlayers.filter(p => p.status === 'playing');
+    const shouldDeclareWinner = hasDirectWinner || (activePlayers.length > 0 && playersStillPlaying.length === 0);
+    
+    if (shouldDeclareWinner) {
+      // Si hay ganador directo (Siglo), usar ese; si no, determinar por mayor pinta
+      let winner: any;
+      let finalPlayers: any[];
+      
+      if (hasDirectWinner) {
+        winner = updatedPlayers.find(p => p.status === 'winner')!;
+        finalPlayers = updatedPlayers;
+      } else {
+        const result = determineWinner(updatedPlayers, gameData.wildcard.value);
+        winner = result.winner;
+        finalPlayers = result.finalPlayers;
+      }
+      
+      const pot = gameData.pot || 0;
+      
+      const playersWithWinner = finalPlayers.map(p =>
+        p.id === winner.id
+          ? { ...p, coins: p.coins + pot }
+          : p
+      );
+
+      transaction.update(gameRef, {
+        players: playersWithWinner,
+        deck: updatedDeck,
+        pot: 0,
+        roundState: 'finished',
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      transaction.update(gameRef, {
+        players: updatedPlayers,
+        deck: updatedDeck,
+        updatedAt: serverTimestamp(),
+      });
+    }
   });
 };
 
@@ -627,6 +700,7 @@ export const resetGameWithBets = async (
       status: 'playing' as const,
       bet: newBaseBet,
       wildcardActive: false,
+      bustedHistory: null, // Limpiar historial de busted
     }));
 
     // Calcular nuevo pot

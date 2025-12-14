@@ -2,6 +2,13 @@ export type RoundState = 'lobby' | 'in_round' | 'resolving' | 'finished';
 
 export type PlayerStatus = 'waiting' | 'playing' | 'stood' | 'busted' | 'winner';
 
+export interface BustedHistory {
+  hand: number[];
+  wildcardActive: boolean;
+  wildcardValue: number;
+  total: number;
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -11,6 +18,7 @@ export interface Player {
   bet: number;
   wildcardActive: boolean;
   isReady?: boolean; // Solo usado en lobby
+  bustedHistory?: BustedHistory | null; // Historial de la última mano perdida
 }
 
 export interface Wildcard {

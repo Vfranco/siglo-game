@@ -324,6 +324,7 @@ export const GameTable = () => {
   const isMyTurn = game?.currentTurnIndex !== undefined && players[game.currentTurnIndex]?.id === userId;
   const myTotal = calculateTotal(myHand, wildcardActive, game?.wildcard?.value || 0);
   const playerCoins = currentPlayer?.coins || 0;
+  const myBustedHistory = currentPlayer?.bustedHistory || null;
 
   if (loading || !game) {
     return (
@@ -416,6 +417,7 @@ export const GameTable = () => {
           wildcardValue={game.wildcard.value}
           playerName={playerName}
           status={myStatus}
+          bustedHistory={myBustedHistory}
         />
 
         {/* Controles del juego */}
