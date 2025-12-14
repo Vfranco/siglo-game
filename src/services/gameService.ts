@@ -152,12 +152,14 @@ export const startGame = async (roomCode: string): Promise<void> => {
     const baseBet = gameData.baseBet || 100;
 
     // Actualizar jugadores: status = 'playing', bet = baseBet
-    const updatedPlayers = players.map(p => ({
-      ...p,
-      status: 'playing' as const,
-      bet: baseBet,
-      isReady: undefined, // Remover isReady
-    }));
+    const updatedPlayers = players.map(p => {
+      const { isReady, ...playerWithoutReady } = p;
+      return {
+        ...playerWithoutReady,
+        status: 'playing' as const,
+        bet: baseBet,
+      };
+    });
 
     // Calcular pot inicial
     const pot = players.length * baseBet;
@@ -242,12 +244,53 @@ export const drawTile = async (
       return p;
     });
 
-    transaction.update(gameRef, {
-      players: updatedPlayers,
-      deck: remainingDeck,
-      drawnTiles: arrayUnion(drawnTile),
-      updatedAt: serverTimestamp(),
-    });
+    // Verificar si hay un ganador:
+    // 1. Siglo directo (99-100)
+    // 2. Todos los jugadores activos terminaron (no hay nadie en 'playing')
+    const hasDirectWinner = updatedPlayers.some(p => p.status === 'winner');
+    const activePlayers = updatedPlayers.filter(p => p.status !== 'busted');
+    const playersStillPlaying = activePlayers.filter(p => p.status === 'playing');
+    const shouldDeclareWinner = hasDirectWinner || (activePlayers.length > 0 && playersStillPlaying.length === 0);
+    
+    if (shouldDeclareWinner) {
+      // Si hay ganador directo (Siglo), usar ese; si no, determinar por mayor pinta
+      let winner: any;
+      let finalPlayers: any[];
+      
+      if (hasDirectWinner) {
+        winner = updatedPlayers.find(p => p.status === 'winner')!;
+        finalPlayers = updatedPlayers;
+      } else {
+        const result = determineWinner(updatedPlayers, gameData.wildcard.value);
+        winner = result.winner;
+        finalPlayers = result.finalPlayers;
+      }
+      
+      const pot = gameData.pot || 0;
+      
+      const playersWithWinner = finalPlayers.map(p =>
+        p.id === winner.id
+          ? { ...p, coins: p.coins + pot }
+          : p
+      );
+
+      transaction.update(gameRef, {
+        players: playersWithWinner,
+        deck: remainingDeck,
+        drawnTiles: arrayUnion(drawnTile),
+        pot: 0,
+        roundState: 'finished',
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      transaction.update(gameRef, {
+        players: updatedPlayers,
+        deck: remainingDeck,
+        drawnTiles: arrayUnion(drawnTile),
+        updatedAt: serverTimestamp(),
+      });
+    }
+
 
     return drawnTile;
   });
@@ -325,15 +368,44 @@ export const standPlayer = async (
       p.id === playerId ? { ...p, status: 'stood' as const } : p
     );
 
-    transaction.update(gameRef, {
-      players: updatedPlayers,
-      updatedAt: serverTimestamp(),
-    });
+    // Verificar si se debe declarar ganador
+    const activePlayers = updatedPlayers.filter(p => p.status !== 'busted');
+    const playersStillPlaying = activePlayers.filter(p => p.status === 'playing');
+    
+    // Casos para declarar ganador:
+    // 1. Solo queda este jugador activo (todos los demás están busted)
+    // 2. Todos los jugadores activos se plantaron (no hay nadie en 'playing')
+    const shouldDeclareWinner = activePlayers.length > 0 && playersStillPlaying.length === 0;
+    
+    if (shouldDeclareWinner) {
+      // Determinar el ganador por mayor pinta
+      const { winner, finalPlayers } = determineWinner(updatedPlayers, gameData.wildcard.value);
+      const pot = gameData.pot || 0;
+      
+      const playersWithWinner = finalPlayers.map(p =>
+        p.id === winner.id
+          ? { ...p, coins: p.coins + pot }
+          : p
+      );
+
+      transaction.update(gameRef, {
+        players: playersWithWinner,
+        pot: 0,
+        roundState: 'finished',
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      transaction.update(gameRef, {
+        players: updatedPlayers,
+        updatedAt: serverTimestamp(),
+      });
+    }
   });
 };
 
 /**
  * Pasar al siguiente turno
+ * Salta automáticamente a jugadores que están busteados o plantados
  */
 export const nextTurn = async (roomCode: string): Promise<void> => {
   const gameRef = doc(db, 'games', roomCode);
@@ -348,7 +420,20 @@ export const nextTurn = async (roomCode: string): Promise<void> => {
     const players = gameData.players || [];
     const currentIndex = gameData.currentTurnIndex || 0;
 
-    const nextIndex = (currentIndex + 1) % players.length;
+    // Buscar el siguiente jugador que pueda jugar (no busted ni stood)
+    let nextIndex = (currentIndex + 1) % players.length;
+    let attempts = 0;
+    
+    // Saltar jugadores que están busted o stood
+    while (attempts < players.length) {
+      const nextPlayer = players[nextIndex];
+      if (nextPlayer.status === 'playing') {
+        // Este jugador puede jugar
+        break;
+      }
+      nextIndex = (nextIndex + 1) % players.length;
+      attempts++;
+    }
 
     transaction.update(gameRef, {
       currentTurnIndex: nextIndex,
@@ -362,6 +447,86 @@ export const nextTurn = async (roomCode: string): Promise<void> => {
  */
 export const checkAllBusted = (players: Player[]): boolean => {
   return players.every(p => p.status === 'busted');
+};
+
+/**
+ * Determinar el ganador basándose en la puntuación
+ */
+const determineWinner = (players: Player[], wildcardValue: number): { winner: Player, finalPlayers: Player[] } => {
+  // Si hay un ganador directo (99 o 100), ese es el ganador
+  const directWinner = players.find(p => p.status === 'winner');
+  if (directWinner) {
+    return { winner: directWinner, finalPlayers: players };
+  }
+  
+  // Calcular puntuaciones de jugadores que no están busteados
+  const playersWithScores = players
+    .filter(p => p.status !== 'busted')
+    .map(p => {
+      const handTotal = p.hand.reduce((sum, tile) => sum + tile, 0);
+      const total = handTotal + (p.wildcardActive ? wildcardValue : 0);
+      return { player: p, score: total };
+    });
+  
+  // Si no hay jugadores válidos, todos están busteados
+  if (playersWithScores.length === 0) {
+    // En caso de que todos estén busteados, no hay ganador
+    return { winner: players[0], finalPlayers: players };
+  }
+  
+  // Encontrar el jugador con la puntuación más alta
+  const winnerData = playersWithScores.reduce((max, current) => 
+    current.score > max.score ? current : max
+  );
+  
+  // Actualizar el status del ganador
+  const finalPlayers = players.map(p => 
+    p.id === winnerData.player.id 
+      ? { ...p, status: 'winner' as const }
+      : p
+  );
+  
+  return { 
+    winner: finalPlayers.find(p => p.id === winnerData.player.id)!, 
+    finalPlayers 
+  };
+};
+
+/**
+ * Resolver ganador y distribuir pot
+ */
+export const resolveWinner = async (roomCode: string): Promise<void> => {
+  const gameRef = doc(db, 'games', roomCode);
+
+  await runTransaction(db, async (transaction) => {
+    const gameDoc = await transaction.get(gameRef);
+    if (!gameDoc.exists()) {
+      throw new Error('Game not found');
+    }
+
+    const gameData = gameDoc.data() as Game;
+    const players = gameData.players || [];
+    const pot = gameData.pot || 0;
+
+    // Buscar ganador (quien tenga status 'winner')
+    const winner = players.find(p => p.status === 'winner');
+    
+    if (winner) {
+      // Actualizar coins del ganador
+      const updatedPlayers = players.map(p =>
+        p.id === winner.id
+          ? { ...p, coins: p.coins + pot }
+          : p
+      );
+
+      transaction.update(gameRef, {
+        players: updatedPlayers,
+        pot: 0,
+        roundState: 'finished',
+        updatedAt: serverTimestamp(),
+      });
+    }
+  });
 };
 
 /**

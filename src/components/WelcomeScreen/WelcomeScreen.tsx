@@ -2,14 +2,17 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { pageVariants, pageTransition } from '../../utils/animations';
+import { useAuthContext } from '../../contexts/AuthContext';
 import './WelcomeScreen.css';
 
 export const WelcomeScreen = () => {
   const [playerName, setPlayerName] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
+  const { signIn, user } = useAuthContext();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedName = playerName.trim();
 
@@ -23,9 +26,24 @@ export const WelcomeScreen = () => {
       return;
     }
 
-    // Guardar el nombre en localStorage temporalmente
-    localStorage.setItem('playerName', trimmedName);
-    navigate('/coins-selection');
+    try {
+      setIsLoading(true);
+      setError('');
+      
+      // Autenticar anónimamente si no está autenticado
+      if (!user) {
+        await signIn();
+      }
+      
+      // Guardar el nombre en localStorage
+      localStorage.setItem('playerName', trimmedName);
+      navigate('/coins-selection');
+    } catch (err) {
+      console.error('Error en autenticación:', err);
+      setError('Error al iniciar sesión. Intenta de nuevo.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,9 +85,9 @@ export const WelcomeScreen = () => {
           <button
             type="submit"
             className="btn-primary"
-            disabled={!playerName.trim()}
+            disabled={!playerName.trim() || isLoading}
           >
-            Continuar <span className="keyboard-hint">↵</span>
+            {isLoading ? 'Conectando...' : 'Continuar'} {!isLoading && <span className="keyboard-hint">↵</span>}
           </button>
         </form>
 

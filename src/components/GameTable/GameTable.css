@@ -2,6 +2,51 @@
   min-height: 100vh;
   background: linear-gradient(135deg, #0a2f1f 0%, #061a12 100%);
   padding: 1rem;
+  padding-top: 90px; /* Espacio para el TopBar */
+}
+
+.loading-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  color: #fff;
+  font-size: 1.5rem;
+}
+
+.error-notification {
+  position: fixed;
+  top: 85px;
+  right: 1rem;
+  background: rgba(244, 67, 54, 0.95);
+  color: #fff;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  z-index: 1000;
+  animation: slideInRight 0.3s ease-out;
+}
+
+.error-notification button {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 .game-header {

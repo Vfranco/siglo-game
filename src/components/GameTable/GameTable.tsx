@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { pageVariants, pageTransition } from '../../utils/animations';
-import { Player } from '../../types';
+import { useAuthContext } from '../../contexts/AuthContext';
+import { useDocument } from '../../hooks/useFirestore';
+import { drawTile, toggleWildcard, standPlayer, nextTurn, resetGameWithBets } from '../../services/gameService';
+import { Game } from '../../types';
 import { GameBoard } from './components/GameBoard';
 import { DeckDisplay } from './components/DeckDisplay';
 import { WildcardDisplay } from './components/WildcardDisplay';
@@ -11,286 +14,238 @@ import { GameControls } from './components/GameControls';
 import { PotDisplay } from './components/PotDisplay';
 import { PlayersList } from './components/PlayersList';
 import { ReBetting } from './components/ReBetting';
+import { WinnerModal } from './components/WinnerModal';
+import { TopBar } from './components/TopBar';
 import './GameTable.css';
 
 export const GameTable = () => {
   const navigate = useNavigate();
   const [playerName, setPlayerName] = useState('');
-  const [currentPlayerId] = useState('1'); // ID del jugador actual
-
-  // Estado del juego
-  const [deck, setDeck] = useState<number[]>([]);
-  const [drawnTiles, setDrawnTiles] = useState<number[]>([]);
-  const [wildcard, setWildcard] = useState({ value: 0, revealed: false });
-  const [pot, setPot] = useState(0);
-  const [baseBet] = useState(100);
-  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
-
-  // Jugadores
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [myHand, setMyHand] = useState<number[]>([]);
-  const [wildcardActive, setWildcardActive] = useState(false);
-
+  const [userId, setUserId] = useState('');
+  const [roomCode, setRoomCode] = useState('');
+  const [error, setError] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const { user } = useAuthContext();
+  
+  // Escuchar cambios en tiempo real del juego
+  const { data: game, loading } = useDocument<Game>('games', roomCode || null);
+  
   // Re-betting state
   const [showReBetting, setShowReBetting] = useState(false);
-  const [newBets, setNewBets] = useState<Map<string, number>>(new Map());
-  const [playerCoins, setPlayerCoins] = useState(0);
+  
+  // Winner modal state
+  const [showWinnerModal, setShowWinnerModal] = useState(false);
+  const [winnerData, setWinnerData] = useState<{
+    name: string;
+    isCurrentPlayer: boolean;
+    potWon: number;
+    winType: 'siglo' | 'highest-score';
+    score: number;
+  } | null>(null);
 
   // Inicializar juego
   useEffect(() => {
     const name = localStorage.getItem('playerName');
-    const coins = localStorage.getItem('playerCoins');
+    const storedUserId = localStorage.getItem('userId');
+    const storedRoomCode = localStorage.getItem('roomCode');
 
-    if (!name || !coins) {
-      navigate('/');
+    if (!name || !storedUserId || !storedRoomCode || !user) {
+      navigate('/lobby');
       return;
     }
 
     setPlayerName(name);
-    setPlayerCoins(parseInt(coins));
-
-    // Generar deck (1-90) y mezclar aleatoriamente
-    const initialDeck = Array.from({ length: 90 }, (_, i) => i + 1);
-    const shuffledDeck = shuffleArray(initialDeck);
-
-    // Generar comodín aleatorio (1-30)
-    const randomWildcard = Math.floor(Math.random() * 30) + 1;
-    setWildcard({ value: randomWildcard, revealed: true });
-
-    // Inicializar jugadores (mock)
-    const mockPlayers: Player[] = [
-      {
-        id: '1',
-        name: name,
-        coins: parseInt(coins),
-        hand: [],
-        status: 'playing',
-        bet: baseBet,
-        wildcardActive: false,
-      },
-      {
-        id: '2',
-        name: 'Jugador 2',
-        coins: 2000,
-        hand: [15, 22],
-        status: 'playing',
-        bet: baseBet,
-        wildcardActive: false,
-      },
-      {
-        id: '3',
-        name: 'Jugador 3',
-        coins: 1500,
-        hand: [8, 31],
-        status: 'playing',
-        bet: baseBet,
-        wildcardActive: true,
-      },
-    ];
-
-    setPlayers(mockPlayers);
-
-    // Repartir primera ficha aleatoria al jugador actual
-    const randomIndex = Math.floor(Math.random() * shuffledDeck.length);
-    const firstTile = shuffledDeck[randomIndex];
-    const remainingDeck = shuffledDeck.filter((_, idx) => idx !== randomIndex);
-
-    setMyHand([firstTile]);
-    setDeck(remainingDeck);
-
-    // Calcular pot inicial
-    setPot(mockPlayers.length * baseBet);
-  }, [navigate, baseBet]);
-
-  // Algoritmo Fisher-Yates (Knuth shuffle) para mezclar aleatoriamente
-  const shuffleArray = (array: number[]) => {
-    const shuffled = [...array];
-
-    // Mezclar de atrás hacia adelante para mejor aleatoriedad
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      // Generar índice aleatorio entre 0 e i (inclusivo)
-      const randomIndex = Math.floor(Math.random() * (i + 1));
-
-      // Intercambiar elementos
-      [shuffled[i], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[i]];
-    }
-
-    return shuffled;
-  };
-
-  const calculateTotal = (hand: number[], includeWildcard: boolean) => {
-    const handTotal = hand.reduce((sum, tile) => sum + tile, 0);
-    return includeWildcard ? handTotal + wildcard.value : handTotal;
-  };
-
-  const handleDrawTiles = (count: number) => {
-    if (deck.length === 0) return;
-
-    const tilesToDraw = Math.min(count, deck.length);
-
-    // Extraer fichas de posiciones aleatorias del deck para mayor aleatoriedad
-    const newTiles: number[] = [];
-    const remainingDeck = [...deck];
-
-    for (let i = 0; i < tilesToDraw; i++) {
-      // Seleccionar índice aleatorio del deck restante
-      const randomIndex = Math.floor(Math.random() * remainingDeck.length);
-      const drawnTile = remainingDeck[randomIndex];
-
-      newTiles.push(drawnTile);
-      // Remover la ficha extraída del deck
-      remainingDeck.splice(randomIndex, 1);
-    }
-
-    setMyHand([...myHand, ...newTiles]);
-    setDrawnTiles([...drawnTiles, ...newTiles]);
-    setDeck(remainingDeck);
-
-    // Verificar si se pasó de 100
-    const newTotal = calculateTotal([...myHand, ...newTiles], wildcardActive);
-    if (newTotal > 100) {
-      // Jugador se pasó - busteado
-      handlePlayerBusted();
-    } else if (newTotal === 99 || newTotal === 100) {
-      // ¡SIGLO!
-      handleSiglo();
-    }
-  };
-
-  const handleToggleWildcard = () => {
-    const newWildcardActive = !wildcardActive;
-    setWildcardActive(newWildcardActive);
-
-    // Verificar total con el comodín toggle
-    const newTotal = calculateTotal(myHand, newWildcardActive);
-    if (newTotal > 100) {
-      handlePlayerBusted();
-    } else if (newTotal === 99 || newTotal === 100) {
-      handleSiglo();
-    }
-  };
-
-  const handleStand = () => {
-    // Jugador se queda con su mano actual
-    setPlayers(players.map(p =>
-      p.id === currentPlayerId ? { ...p, status: 'stood' } : p
-    ));
-
-    // Pasar al siguiente turno
-    nextTurn();
-  };
-
-  const handlePlayerBusted = () => {
-    const updatedPlayers = players.map(p =>
-      p.id === currentPlayerId ? { ...p, status: 'busted' as const } : p
-    );
-    setPlayers(updatedPlayers);
-
-    // Verificar si todos los jugadores están busteados
-    const allBusted = updatedPlayers.every(p => p.status === 'busted');
-
-    if (allBusted) {
-      // Todos se pasaron - activar re-apuesta
+    setUserId(storedUserId);
+    setRoomCode(storedRoomCode);
+  }, [navigate, user]);
+  
+  // Detectar cuando todos están busteados para mostrar re-betting
+  useEffect(() => {
+    if (!game) return;
+    
+    const players = game.players || [];
+    const allBusted = players.length > 0 && players.every(p => p.status === 'busted');
+    
+    if (allBusted && !showReBetting) {
       setTimeout(() => {
         setShowReBetting(true);
-        setNewBets(new Map());
       }, 2000);
-    } else {
-      // Pasar al siguiente turno
-      setTimeout(() => nextTurn(), 2000);
+    }
+  }, [game, showReBetting]);
+  
+  // Auto-pasar turno cuando un jugador se pasa o gana
+  useEffect(() => {
+    if (!game || !userId || !roomCode) return;
+    
+    const currentPlayer = game.players?.find(p => p.id === userId);
+    const isMyTurnNow = game.currentTurnIndex !== undefined && 
+                        game.players?.[game.currentTurnIndex]?.id === userId;
+    
+    // Si es mi turno y me pasé o gané, pasar turno automáticamente
+    if (isMyTurnNow && currentPlayer && 
+        (currentPlayer.status === 'busted' || currentPlayer.status === 'winner')) {
+      const timer = setTimeout(async () => {
+        try {
+          await nextTurn(roomCode);
+        } catch (err) {
+          console.error('Error al pasar turno automáticamente:', err);
+        }
+      }, 2000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [game, userId, roomCode]);
+  
+  // Detectar ganador
+  useEffect(() => {
+    if (!game || !userId || showWinnerModal) return;
+    
+    const winner = game.players?.find(p => p.status === 'winner');
+    if (winner && game.roundState === 'finished') {
+      setTimeout(() => {
+        const handTotal = winner.hand.reduce((sum, tile) => sum + tile, 0);
+        const wildcardValue = winner.wildcardActive ? game.wildcard.value : 0;
+        const totalScore = handTotal + wildcardValue;
+        
+        // Determinar si es Siglo (99-100) o mayor pinta
+        const isSiglo = totalScore === 99 || totalScore === 100;
+        
+        setWinnerData({
+          name: winner.name,
+          isCurrentPlayer: winner.id === userId,
+          potWon: game.pot || 0,
+          winType: isSiglo ? 'siglo' : 'highest-score',
+          score: totalScore,
+        });
+        setShowWinnerModal(true);
+      }, 1000);
+    }
+  }, [game, userId, showWinnerModal]);
+
+  const calculateTotal = (hand: number[], includeWildcard: boolean, wildcardValue: number) => {
+    const handTotal = hand.reduce((sum, tile) => sum + tile, 0);
+    return includeWildcard ? handTotal + wildcardValue : handTotal;
+  };
+
+  const handleDrawTiles = async () => {
+    if (!roomCode || !userId || isProcessing) return;
+    
+    try {
+      setIsProcessing(true);
+      await drawTile(roomCode, userId);
+      // El service maneja automáticamente el status
+      // El turno se pasará con el botón "Siguiente turno" o automáticamente si está busted
+    } catch (err) {
+      console.error('Error al pedir ficha:', err);
+      setError('Error al pedir ficha. Intenta de nuevo.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  const handleSiglo = () => {
-    // ¡Ganador!
-    setPlayers(players.map(p =>
-      p.id === currentPlayerId ? { ...p, status: 'winner' } : p
-    ));
-
-    // Mostrar celebración
-    alert(`¡SIGLO! ${playerName} gana ${pot} coins!`);
-  };
-
-  const nextTurn = () => {
-    const nextIndex = (currentTurnIndex + 1) % players.length;
-    setCurrentTurnIndex(nextIndex);
-  };
-
-  const handlePlaceBet = (amount: number) => {
-    // Guardar la apuesta del jugador actual
-    const updatedBets = new Map(newBets);
-    updatedBets.set(currentPlayerId, amount);
-    setNewBets(updatedBets);
-
-    // Actualizar coins del jugador
-    setPlayerCoins(playerCoins - amount);
-
-    // Verificar si todos los jugadores han apostado
-    if (updatedBets.size === players.length) {
-      // Obtener la apuesta más alta
-      const highestBet = Math.max(...Array.from(updatedBets.values()));
-
-      // Todos deben igualar la apuesta más alta
-      const finalBets = new Map<string, number>();
-      players.forEach(player => {
-        finalBets.set(player.id, highestBet);
-      });
-
-      // Resetear el juego con las nuevas apuestas
-      resetGameWithNewBets(highestBet);
+  const handleToggleWildcard = async () => {
+    if (!roomCode || !userId || isProcessing) return;
+    
+    try {
+      setIsProcessing(true);
+      await toggleWildcard(roomCode, userId);
+    } catch (err) {
+      console.error('Error al toggle comodín:', err);
+      setError('Error al activar comodín. Intenta de nuevo.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  const resetGameWithNewBets = (newBaseBet: number) => {
-    // Generar nuevo deck y mezclarlo
-    const newDeck = Array.from({ length: 90 }, (_, i) => i + 1);
-    const shuffledDeck = shuffleArray(newDeck);
-
-    // Generar nuevo comodín
-    const randomWildcard = Math.floor(Math.random() * 30) + 1;
-    setWildcard({ value: randomWildcard, revealed: true });
-
-    // Resetear jugadores a estado "playing"
-    const resetPlayers = players.map(p => ({
-      ...p,
-      hand: [],
-      status: 'playing' as const,
-      bet: newBaseBet,
-      wildcardActive: false,
-    }));
-    setPlayers(resetPlayers);
-
-    // Calcular nuevo pot
-    const newPot = players.length * newBaseBet;
-    setPot(newPot);
-
-    // Repartir primera ficha aleatoria al jugador actual
-    const randomIndex = Math.floor(Math.random() * shuffledDeck.length);
-    const firstTile = shuffledDeck[randomIndex];
-    const remainingDeck = shuffledDeck.filter((_, idx) => idx !== randomIndex);
-
-    setMyHand([firstTile]);
-    setDeck(remainingDeck);
-    setDrawnTiles([]);
-    setWildcardActive(false);
-
-    // Cerrar modal de re-apuesta
-    setShowReBetting(false);
-    setNewBets(new Map());
-
-    // Reiniciar desde el primer jugador
-    setCurrentTurnIndex(0);
+  const handleStand = async () => {
+    if (!roomCode || !userId || isProcessing) return;
+    
+    try {
+      setIsProcessing(true);
+      await standPlayer(roomCode, userId);
+      await nextTurn(roomCode);
+    } catch (err) {
+      console.error('Error al quedarse:', err);
+      setError('Error al quedarse. Intenta de nuevo.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const isMyTurn = players[currentTurnIndex]?.id === currentPlayerId;
-  const myTotal = calculateTotal(myHand, wildcardActive);
-  const myStatus = players.find(p => p.id === currentPlayerId)?.status || 'playing';
+  const handlePlaceBet = async (amount: number) => {
+    if (!roomCode || !userId) return;
+    
+    try {
+      // Aquí implementarías la lógica de re-apuesta
+      // Por ahora, simplemente reseteamos el juego con la nueva apuesta
+      await resetGameWithBets(roomCode, amount);
+      setShowReBetting(false);
+    } catch (err) {
+      console.error('Error al apostar:', err);
+      setError('Error al colocar apuesta. Intenta de nuevo.');
+    }
+  };
+  
+  const handleNewRound = async () => {
+    if (!roomCode) return;
+    
+    try {
+      // Resetear el juego con la misma apuesta base
+      await resetGameWithBets(roomCode, game?.baseBet || 100);
+      setShowWinnerModal(false);
+      setWinnerData(null);
+    } catch (err) {
+      console.error('Error al iniciar nueva ronda:', err);
+      setError('Error al iniciar nueva ronda. Intenta de nuevo.');
+    }
+  };
+  
+  const handleBackToLobby = () => {
+    // Limpiar localStorage y navegar al lobby
+    localStorage.removeItem('roomCode');
+    navigate('/lobby');
+  };
+  
+  const handleLeaveGame = () => {
+    // Confirmar antes de salir
+    const confirmLeave = window.confirm('¿Estás seguro de que deseas abandonar la partida?');
+    if (confirmLeave) {
+      // Limpiar todo el localStorage relacionado con la partida
+      localStorage.removeItem('roomCode');
+      localStorage.removeItem('playerName');
+      localStorage.removeItem('userId');
+      localStorage.removeItem('selectedCoins');
+      // Navegar al inicio
+      navigate('/');
+    }
+  };
+  
+  // Datos derivados del estado de Firebase
+  const players = game?.players || [];
+  const currentPlayer = players.find(p => p.id === userId);
+  const myHand = currentPlayer?.hand || [];
+  const wildcardActive = currentPlayer?.wildcardActive || false;
+  const myStatus = currentPlayer?.status || 'waiting';
+  const isMyTurn = game?.currentTurnIndex !== undefined && players[game.currentTurnIndex]?.id === userId;
+  const myTotal = calculateTotal(myHand, wildcardActive, game?.wildcard?.value || 0);
+  const playerCoins = currentPlayer?.coins || 0;
 
-  const currentHighestBet = newBets.size > 0
-    ? Math.max(...Array.from(newBets.values()))
-    : 0;
-
-  const myBetPlaced = newBets.has(currentPlayerId);
+  if (loading || !game) {
+    return (
+      <motion.div
+        className="game-table-screen"
+        initial="initial"
+        animate="in"
+        exit="out"
+        variants={pageVariants}
+        transition={pageTransition}
+      >
+        <div className="loading-container">
+          <h2>⏳ Cargando juego...</h2>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -301,35 +256,61 @@ export const GameTable = () => {
       variants={pageVariants}
       transition={pageTransition}
     >
+      <TopBar
+        playerName={playerName}
+        playerCoins={playerCoins}
+        roomCode={roomCode}
+        onLeave={handleLeaveGame}
+      />
+      
+      {error && (
+        <div className="error-notification">
+          <span>⚠️ {error}</span>
+          <button onClick={() => setError('')}>✕</button>
+        </div>
+      )}
+      
       {showReBetting && (
         <ReBetting
           playerCoins={playerCoins}
           onPlaceBet={handlePlaceBet}
-          currentHighestBet={currentHighestBet}
-          allBetsPlaced={myBetPlaced}
+          currentHighestBet={game.baseBet}
+          allBetsPlaced={false}
+        />
+      )}
+      
+      {showWinnerModal && winnerData && (
+        <WinnerModal
+          winnerName={winnerData.name}
+          isCurrentPlayer={winnerData.isCurrentPlayer}
+          potWon={winnerData.potWon}
+          winType={winnerData.winType}
+          winnerScore={winnerData.score}
+          onNewRound={handleNewRound}
+          onBackToLobby={handleBackToLobby}
         />
       )}
 
       <GameBoard>
         {/* Header con info del juego */}
         <div className="game-header">
-          <PotDisplay pot={pot} />
+          <PotDisplay pot={game.pot} />
           <WildcardDisplay
-            value={wildcard.value}
-            revealed={wildcard.revealed}
+            value={game.wildcard.value}
+            revealed={game.wildcard.revealed}
             active={wildcardActive}
           />
           <DeckDisplay
-            remainingTiles={deck.length}
-            drawnTiles={drawnTiles}
+            remainingTiles={game.deck.length}
+            drawnTiles={game.drawnTiles}
           />
         </div>
 
         {/* Lista de jugadores */}
         <PlayersList
           players={players}
-          currentTurnIndex={currentTurnIndex}
-          currentPlayerId={currentPlayerId}
+          currentTurnIndex={game.currentTurnIndex}
+          currentPlayerId={userId}
         />
 
         {/* Mano del jugador */}
@@ -337,7 +318,7 @@ export const GameTable = () => {
           hand={myHand}
           total={myTotal}
           wildcardActive={wildcardActive}
-          wildcardValue={wildcard.value}
+          wildcardValue={game.wildcard.value}
           playerName={playerName}
           status={myStatus}
         />
@@ -350,7 +331,7 @@ export const GameTable = () => {
           onToggleWildcard={handleToggleWildcard}
           onStand={handleStand}
           wildcardActive={wildcardActive}
-          canDraw={deck.length > 0}
+          canDraw={game.deck.length > 0 && !isProcessing}
         />
       </GameBoard>
     </motion.div>

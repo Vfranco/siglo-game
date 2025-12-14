@@ -2,14 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { pageVariants, pageTransition } from '../../utils/animations';
+import { useAuthContext } from '../../contexts/AuthContext';
+import { useDocument } from '../../hooks/useFirestore';
+import { createGame, joinGame, setPlayerReady, startGame } from '../../services/gameService';
+import { Game } from '../../types';
+import { LobbyTopBar } from './components/LobbyTopBar';
 import './Lobby.css';
-
-interface LobbyPlayer {
-  id: string;
-  name: string;
-  coins: number;
-  isReady: boolean;
-}
 
 const MAX_PLAYERS = 6;
 
@@ -19,66 +17,81 @@ const generateRoomCode = () => {
 };
 
 export const Lobby = () => {
+  const [userId, setUserId] = useState('');
   const [playerName, setPlayerName] = useState('');
-  const [players, setPlayers] = useState<LobbyPlayer[]>([]);
-  const [isReady, setIsReady] = useState(false);
-  const [baseBet] = useState(100);
-  const [roomCode] = useState(generateRoomCode());
+  const [playerCoins, setPlayerCoins] = useState(0);
+  const [roomCode, setRoomCode] = useState('');
   const [copied, setCopied] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState('');
+  const [showJoinInput, setShowJoinInput] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
   const navigate = useNavigate();
+  const { user } = useAuthContext();
+  
+  // Escuchar cambios en tiempo real del juego
+  const { data: game, loading } = useDocument<Game>('games', roomCode || null);
+  
+  const baseBet = game?.baseBet || 100;
+  const players = game?.players || [];
+  const currentPlayer = players.find(p => p.id === userId);
+  const isReady = currentPlayer?.isReady || false;
+  const isHost = game?.hostId === userId;
 
   useEffect(() => {
     const name = localStorage.getItem('playerName');
     const coins = localStorage.getItem('playerCoins');
+    const storedUserId = localStorage.getItem('userId');
 
-    if (!name || !coins) {
+    if (!name || !coins || !storedUserId || !user) {
       navigate('/');
       return;
     }
 
+    setUserId(storedUserId);
     setPlayerName(name);
+    setPlayerCoins(parseInt(coins));
 
-    // Simulación de jugadores (esto se reemplazará con Firebase)
-    const currentPlayer: LobbyPlayer = {
-      id: '1',
-      name: name,
-      coins: parseInt(coins),
-      isReady: false,
-    };
+    // Verificar si ya tiene un roomCode guardado
+    const storedRoomCode = localStorage.getItem('roomCode');
+    if (storedRoomCode) {
+      setRoomCode(storedRoomCode);
+      setShowJoinInput(false);
+    } else {
+      // No crear sala automáticamente, esperar a que el usuario decida
+      setShowJoinInput(true);
+    }
+  }, [navigate, user]);
 
-    // Jugadores de ejemplo
-    const mockPlayers: LobbyPlayer[] = [
-      currentPlayer,
-      {
-        id: '2',
-        name: 'Jugador 2',
-        coins: 2000,
-        isReady: true,
-      },
-      {
-        id: '3',
-        name: 'Jugador 3',
-        coins: 1000,
-        isReady: false,
-      },
-    ];
-
-    setPlayers(mockPlayers);
-  }, [navigate]);
-
-  const handleToggleReady = () => {
-    setIsReady(!isReady);
-    setPlayers((prev) =>
-      prev.map((p) =>
-        p.id === '1' ? { ...p, isReady: !isReady } : p
-      )
-    );
+  const handleToggleReady = async () => {
+    if (!roomCode || !userId) return;
+    
+    try {
+      await setPlayerReady(roomCode, userId, !isReady);
+    } catch (err) {
+      console.error('Error al marcar como listo:', err);
+      setError('Error al actualizar estado. Intenta de nuevo.');
+    }
   };
 
-  const handleStartGame = () => {
-    // Navegar a la mesa de juego
-    navigate('/game');
+  const handleStartGame = async () => {
+    if (!roomCode || !isHost) return;
+    
+    try {
+      await startGame(roomCode);
+      // Firebase actualizará el estado y todos navegarán
+    } catch (err) {
+      console.error('Error al iniciar juego:', err);
+      setError('Error al iniciar el juego. Intenta de nuevo.');
+    }
   };
+  
+  // Navegar automáticamente cuando el juego inicie
+  useEffect(() => {
+    if (game?.roundState === 'in_round') {
+      navigate('/game');
+    }
+  }, [game?.roundState, navigate]);
 
   const handleCopyRoomCode = async () => {
     try {
@@ -90,8 +103,183 @@ export const Lobby = () => {
     }
   };
 
-  const somePlayersReady = players.some((p) => p.isReady);
+  const handleCreateRoom = async () => {
+    const name = localStorage.getItem('playerName');
+    const coins = localStorage.getItem('playerCoins');
+    
+    if (!name || !coins || !userId) return;
+    
+    setIsCreating(true);
+    try {
+      const newRoomCode = generateRoomCode();
+      await createGame(newRoomCode, userId, 100);
+      await joinGame(newRoomCode, userId, name, parseInt(coins));
+      setRoomCode(newRoomCode);
+      localStorage.setItem('roomCode', newRoomCode);
+      setShowJoinInput(false);
+    } catch (err) {
+      console.error('Error creando sala:', err);
+      setError('Error al crear la sala. Intenta de nuevo.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleJoinRoom = async () => {
+    const name = localStorage.getItem('playerName');
+    const coins = localStorage.getItem('playerCoins');
+    
+    if (!name || !coins || !userId || !joinCode) return;
+    
+    setIsCreating(true);
+    try {
+      await joinGame(joinCode.toUpperCase(), userId, name, parseInt(coins));
+      setRoomCode(joinCode.toUpperCase());
+      localStorage.setItem('roomCode', joinCode.toUpperCase());
+      setShowJoinInput(false);
+      setError('');
+    } catch (err) {
+      console.error('Error uniéndose a sala:', err);
+      setError('Sala no encontrada o error al unirse. Verifica el código.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleLogout = () => {
+    const confirmLogout = window.confirm('¿Estás seguro de que deseas cerrar sesión?');
+    if (confirmLogout) {
+      // Limpiar todo el localStorage
+      localStorage.removeItem('roomCode');
+      localStorage.removeItem('playerName');
+      localStorage.removeItem('userId');
+      localStorage.removeItem('playerCoins');
+      localStorage.removeItem('selectedCoins');
+      // Navegar al inicio
+      navigate('/');
+    }
+  };
+  
+  const allPlayersReady = players.length > 1 && players.every((p) => p.isReady);
   const roomFull = players.length >= MAX_PLAYERS;
+  
+  // Mostrar pantalla de crear/unirse si no hay sala
+  if (showJoinInput && !roomCode) {
+    return (
+      <motion.div
+        className="lobby-screen"
+        initial="initial"
+        animate="in"
+        exit="out"
+        variants={pageVariants}
+        transition={pageTransition}
+      >
+        <LobbyTopBar
+          playerName={playerName}
+          playerCoins={playerCoins}
+          onLogout={handleLogout}
+        />
+        
+        <div className="lobby-container">
+          <div className="join-create-container">
+            <h1 className="lobby-title">Crear o Unirse a Sala</h1>
+            
+            {error && (
+              <div className="error-banner">
+                <span>⚠️ {error}</span>
+                <button onClick={() => setError('')}>✕</button>
+              </div>
+            )}
+            
+            <div className="join-create-options">
+              <div className="option-card">
+                <h2>🎮 Crear Nueva Sala</h2>
+                <p>Crea una nueva sala y comparte el código con tus amigos</p>
+                <button 
+                  className="btn-primary"
+                  onClick={handleCreateRoom}
+                  disabled={isCreating}
+                >
+                  {isCreating ? 'Creando...' : 'Crear Sala'}
+                </button>
+              </div>
+              
+              <div className="option-divider">o</div>
+              
+              <div className="option-card">
+                <h2>🚪 Unirse a Sala</h2>
+                <p>Ingresa el código de sala de tu amigo</p>
+                <input
+                  type="text"
+                  className="join-code-input"
+                  placeholder="Ej: 3W2VGS"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                  maxLength={6}
+                />
+                <button 
+                  className="btn-primary"
+                  onClick={handleJoinRoom}
+                  disabled={isCreating || joinCode.length !== 6}
+                >
+                  {isCreating ? 'Uniéndose...' : 'Unirse'}
+                </button>
+              </div>
+            </div>
+            
+            <button
+              className="btn-secondary"
+              onClick={() => navigate('/coins-selection')}
+              style={{ marginTop: '2rem' }}
+            >
+              ← Atrás
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+  
+  if (loading || (isCreating && roomCode)) {
+    return (
+      <motion.div
+        className="lobby-screen"
+        initial="initial"
+        animate="in"
+        exit="out"
+        variants={pageVariants}
+        transition={pageTransition}
+      >
+        <div className="lobby-container">
+          <div className="loading-message">
+            <h2>⏳ Cargando sala...</h2>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (!game && roomCode) {
+    return (
+      <motion.div
+        className="lobby-screen"
+        initial="initial"
+        animate="in"
+        exit="out"
+        variants={pageVariants}
+        transition={pageTransition}
+      >
+        <div className="lobby-container">
+          <div className="error-message">
+            <h2>❌ Error al cargar la sala</h2>
+            <button className="btn-primary" onClick={() => navigate('/coins-selection')}>
+              Volver a intentar
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -102,6 +290,12 @@ export const Lobby = () => {
       variants={pageVariants}
       transition={pageTransition}
     >
+      <LobbyTopBar
+        playerName={playerName}
+        playerCoins={playerCoins}
+        onLogout={handleLogout}
+      />
+      
       <div className="lobby-container">
         <div className="lobby-header">
           <h1 className="lobby-title">Sala de Juego</h1>
@@ -135,6 +329,13 @@ export const Lobby = () => {
         </div>
 
         <div className="lobby-content">
+          {error && (
+            <div className="error-banner">
+              <span>⚠️ {error}</span>
+              <button onClick={() => setError('')}>✕</button>
+            </div>
+          )}
+          
           <div className="players-section">
             <h2 className="section-title">Jugadores en la Sala</h2>
             <div className="players-list">
@@ -142,7 +343,7 @@ export const Lobby = () => {
                 <div
                   key={player.id}
                   className={`player-card ${player.isReady ? 'ready' : ''} ${
-                    player.name === playerName ? 'current-player' : ''
+                    player.id === userId ? 'current-player' : ''
                   }`}
                 >
                   <div className="player-avatar">
@@ -151,8 +352,11 @@ export const Lobby = () => {
                   <div className="player-info">
                     <div className="player-name">
                       {player.name}
-                      {player.name === playerName && (
+                      {player.id === userId && (
                         <span className="you-badge">Tú</span>
+                      )}
+                      {player.id === game?.hostId && (
+                        <span className="host-badge">Host</span>
                       )}
                     </div>
                     <div className="player-coins">💰 {player.coins.toLocaleString()} coins</div>
@@ -177,7 +381,7 @@ export const Lobby = () => {
               {isReady ? '✓ Listo' : 'Marcar como Listo'}
             </button>
 
-            {somePlayersReady && (
+            {isHost && allPlayersReady && (
               <button
                 className="btn-start-game"
                 onClick={handleStartGame}
@@ -185,10 +389,25 @@ export const Lobby = () => {
                 Iniciar Partida
               </button>
             )}
+            
+            {isHost && !allPlayersReady && players.length > 1 && (
+              <div className="waiting-message">
+                ⏳ Esperando a que todos los jugadores estén listos...
+              </div>
+            )}
+            
+            {players.length === 1 && (
+              <div className="waiting-message">
+                👥 Esperando a que más jugadores se unan...
+              </div>
+            )}
 
             <button
               className="btn-leave"
-              onClick={() => navigate('/coins-selection')}
+              onClick={() => {
+                localStorage.removeItem('roomCode');
+                navigate('/coins-selection');
+              }}
             >
               Salir del Lobby
             </button>

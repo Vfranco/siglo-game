@@ -28,18 +28,16 @@ service cloud.firestore {
     // Reglas para la colección de juegos
     match /games/{gameId} {
 
-      // Permitir lectura si estás autenticado y en la partida
+      // Permitir lectura si estás autenticado
       allow read: if isAuthenticated();
 
       // Permitir crear juego si estás autenticado
       allow create: if isAuthenticated() &&
                        request.resource.data.hostId == request.auth.uid &&
-                       request.resource.data.roundState == 'lobby' &&
-                       request.resource.data.baseBet >= 100;
+                       request.resource.data.roundState == 'lobby';
 
-      // Permitir actualizar solo si estás en la partida
-      allow update: if isAuthenticated() &&
-                       isInGame(resource.data);
+      // Permitir actualizar si estás autenticado
+      allow update: if isAuthenticated();
 
       // No permitir eliminar juegos directamente
       allow delete: if false;

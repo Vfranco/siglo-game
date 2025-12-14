@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { pageVariants, pageTransition } from '../../utils/animations';
+import { useAuthContext } from '../../contexts/AuthContext';
 import './CoinsSelection.css';
 
 const COIN_OPTIONS = [1000, 2000, 3000, 4000];
@@ -10,26 +11,28 @@ export const CoinsSelection = () => {
   const [selectedCoins, setSelectedCoins] = useState<number | null>(null);
   const [playerName, setPlayerName] = useState('');
   const navigate = useNavigate();
+  const { user } = useAuthContext();
 
   useEffect(() => {
     const name = localStorage.getItem('playerName');
-    if (!name) {
+    if (!name || !user) {
       navigate('/');
       return;
     }
     setPlayerName(name);
-  }, [navigate]);
+  }, [navigate, user]);
 
   const handleCoinSelect = (amount: number) => {
     setSelectedCoins(amount);
   };
 
   const handleContinue = useCallback(() => {
-    if (selectedCoins) {
+    if (selectedCoins && user) {
       localStorage.setItem('playerCoins', selectedCoins.toString());
+      localStorage.setItem('userId', user.uid);
       navigate('/lobby');
     }
-  }, [selectedCoins, navigate]);
+  }, [selectedCoins, navigate, user]);
 
   // Keyboard shortcuts: 1-4 para seleccionar, Enter para continuar
   useEffect(() => {
