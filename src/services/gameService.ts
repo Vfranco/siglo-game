@@ -37,15 +37,16 @@ export const createGame = async (
   const initialDeck = Array.from({ length: 90 }, (_, i) => i + 1);
   const shuffledDeck = shuffleArray(initialDeck);
 
-  // Generar comodín aleatorio (1-30)
-  const wildcardValue = Math.floor(Math.random() * 30) + 1;
+  // Extraer el comodín del deck (primera ficha)
+  const wildcardValue = shuffledDeck[0];
+  const deckWithoutWildcard = shuffledDeck.slice(1);
 
   const gameData: Partial<Game> = {
     roomCode,
     hostId,
     baseBet,
     pot: 0,
-    deck: shuffledDeck,
+    deck: deckWithoutWildcard,
     wildcard: {
       value: wildcardValue,
       revealed: false,
@@ -102,6 +103,69 @@ export const joinGame = async (
   await updateDoc(gameRef, {
     players: arrayUnion(newPlayer),
     updatedAt: serverTimestamp(),
+  });
+};
+
+/**
+ * Remover jugador de la sala (solo host)
+ */
+export const removePlayer = async (
+  roomCode: string,
+  playerId: string,
+  hostId: string
+): Promise<void> => {
+  const gameRef = doc(db, 'games', roomCode);
+
+  await runTransaction(db, async (transaction) => {
+    const gameDoc = await transaction.get(gameRef);
+    if (!gameDoc.exists()) {
+      throw new Error('Game not found');
+    }
+
+    const gameData = gameDoc.data() as Game;
+
+    // Verificar que quien remueve es el host
+    if (gameData.hostId !== hostId) {
+      throw new Error('Only host can remove players');
+    }
+
+    // Verificar que el jugador no sea el host
+    if (playerId === hostId) {
+      throw new Error('Host cannot remove themselves');
+    }
+
+    // Remover al jugador
+    const updatedPlayers = gameData.players?.filter(p => p.id !== playerId) || [];
+
+    transaction.update(gameRef, {
+      players: updatedPlayers,
+      updatedAt: serverTimestamp(),
+    });
+  });
+};
+
+/**
+ * Remover jugador durante el juego (auto-abandono)
+ */
+export const leaveGame = async (
+  roomCode: string,
+  playerId: string
+): Promise<void> => {
+  const gameRef = doc(db, 'games', roomCode);
+
+  await runTransaction(db, async (transaction) => {
+    const gameDoc = await transaction.get(gameRef);
+    if (!gameDoc.exists()) {
+      throw new Error('Game not found');
+    }
+
+    const gameData = gameDoc.data() as Game;
+    const updatedPlayers = gameData.players?.filter(p => p.id !== playerId) || [];
+
+    transaction.update(gameRef, {
+      players: updatedPlayers,
+      updatedAt: serverTimestamp(),
+    });
   });
 };
 
@@ -164,6 +228,7 @@ export const startGame = async (roomCode: string): Promise<void> => {
     // Calcular pot inicial
     const pot = players.length * baseBet;
 
+    // El comodín ya fue extraído del deck al crear la sala
     // Repartir primera ficha a cada jugador
     let remainingDeck = [...gameData.deck];
     const playersWithFirstTile = updatedPlayers.map(player => {
@@ -551,8 +616,9 @@ export const resetGameWithBets = async (
     const newDeck = Array.from({ length: 90 }, (_, i) => i + 1);
     const shuffledDeck = shuffleArray(newDeck);
 
-    // Generar nuevo comodín
-    const newWildcard = Math.floor(Math.random() * 30) + 1;
+    // Extraer el comodín del deck (primera ficha)
+    const newWildcard = shuffledDeck[0];
+    const deckWithoutWildcard = shuffledDeck.slice(1);
 
     // Resetear jugadores
     const resetPlayers = players.map(p => ({
@@ -567,7 +633,7 @@ export const resetGameWithBets = async (
     const newPot = players.length * newBaseBet;
 
     // Repartir primera ficha a cada jugador
-    let remainingDeck = [...shuffledDeck];
+    let remainingDeck = [...deckWithoutWildcard];
     const playersWithFirstTile = resetPlayers.map(player => {
       const randomIndex = Math.floor(Math.random() * remainingDeck.length);
       const firstTile = remainingDeck[randomIndex];
@@ -590,7 +656,104 @@ export const resetGameWithBets = async (
       },
       baseBet: newBaseBet,
       currentTurnIndex: 0,
+      roundState: 'in_round',
       updatedAt: serverTimestamp(),
     });
+  });
+};
+
+/**
+ * Colocar apuesta individual para re-betting
+ */
+export const placeReBet = async (
+  roomCode: string,
+  userId: string,
+  betAmount: number
+): Promise<void> => {
+  const gameRef = doc(db, 'games', roomCode);
+
+  await runTransaction(db, async (transaction) => {
+    const gameDoc = await transaction.get(gameRef);
+    if (!gameDoc.exists()) {
+      throw new Error('Game not found');
+    }
+
+    const gameData = gameDoc.data() as Game;
+    const players = gameData.players || [];
+    
+    // Actualizar la apuesta del jugador y marcarlo como listo
+    const updatedPlayers = players.map(p => {
+      if (p.id === userId) {
+        return {
+          ...p,
+          bet: betAmount,
+          isReady: true, // Usar isReady para indicar que ya apostó
+        };
+      }
+      return p;
+    });
+
+    // Verificar si todos han apostado
+    const allBetsPlaced = updatedPlayers.every(p => p.isReady);
+    
+    if (allBetsPlaced) {
+      // Obtener la apuesta más alta
+      const highestBet = Math.max(...updatedPlayers.map(p => p.bet || 0));
+      
+      // Generar nuevo deck y mezclarlo
+      const newDeck = Array.from({ length: 90 }, (_, i) => i + 1);
+      const shuffledDeck = shuffleArray(newDeck);
+
+      // Extraer el comodín del deck (primera ficha)
+      const newWildcard = shuffledDeck[0];
+      const deckWithoutWildcard = shuffledDeck.slice(1);
+
+      // Resetear jugadores con la apuesta más alta
+      const resetPlayers = updatedPlayers.map(p => ({
+        ...p,
+        hand: [],
+        status: 'playing' as const,
+        bet: highestBet,
+        wildcardActive: false,
+        isReady: false, // Resetear el estado de ready
+      }));
+
+      // Calcular nuevo pot
+      const newPot = resetPlayers.length * highestBet;
+
+      // Repartir primera ficha a cada jugador
+      let remainingDeck = [...deckWithoutWildcard];
+      const playersWithFirstTile = resetPlayers.map(player => {
+        const randomIndex = Math.floor(Math.random() * remainingDeck.length);
+        const firstTile = remainingDeck[randomIndex];
+        remainingDeck = remainingDeck.filter((_, idx) => idx !== randomIndex);
+
+        return {
+          ...player,
+          hand: [firstTile],
+        };
+      });
+
+      transaction.update(gameRef, {
+        players: playersWithFirstTile,
+        pot: newPot,
+        deck: remainingDeck,
+        drawnTiles: [],
+        wildcard: {
+          value: newWildcard,
+          revealed: true,
+        },
+        baseBet: highestBet,
+        currentTurnIndex: 0,
+        roundState: 'in_round',
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      // Solo actualizar las apuestas de los jugadores
+      transaction.update(gameRef, {
+        players: updatedPlayers,
+        updatedAt: serverTimestamp(),
+      });
+    }
   });
 };

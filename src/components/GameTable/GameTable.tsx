@@ -4,7 +4,8 @@ import { motion } from 'framer-motion';
 import { pageVariants, pageTransition } from '../../utils/animations';
 import { useAuthContext } from '../../contexts/AuthContext';
 import { useDocument } from '../../hooks/useFirestore';
-import { drawTile, toggleWildcard, standPlayer, nextTurn, resetGameWithBets } from '../../services/gameService';
+import { useGameSounds } from '../../hooks/useGameSounds';
+import { drawTile, toggleWildcard, standPlayer, nextTurn, resetGameWithBets, placeReBet, leaveGame } from '../../services/gameService';
 import { Game } from '../../types';
 import { GameBoard } from './components/GameBoard';
 import { DeckDisplay } from './components/DeckDisplay';
@@ -16,6 +17,8 @@ import { PlayersList } from './components/PlayersList';
 import { ReBetting } from './components/ReBetting';
 import { WinnerModal } from './components/WinnerModal';
 import { TopBar } from './components/TopBar';
+import { ConfirmModal } from '../shared/ConfirmModal';
+import { NotificationModal } from '../shared/NotificationModal';
 import './GameTable.css';
 
 export const GameTable = () => {
@@ -25,7 +28,11 @@ export const GameTable = () => {
   const [roomCode, setRoomCode] = useState('');
   const [error, setError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [notification, setNotification] = useState<{title: string, message: string, type: 'info' | 'warning' | 'error'} | null>(null);
+  const [previousPlayerCount, setPreviousPlayerCount] = useState<number>(0);
   const { user } = useAuthContext();
+  const sounds = useGameSounds();
   
   // Escuchar cambios en tiempo real del juego
   const { data: game, loading } = useDocument<Game>('games', roomCode || null);
@@ -59,6 +66,20 @@ export const GameTable = () => {
     setRoomCode(storedRoomCode);
   }, [navigate, user]);
   
+  // Iniciar música de fondo cuando el componente se monta
+  useEffect(() => {
+    // Intentar iniciar música de fondo
+    const timer = setTimeout(() => {
+      sounds.startBackgroundMusic();
+    }, 500);
+    
+    // Detener música cuando se desmonta el componente
+    return () => {
+      clearTimeout(timer);
+      sounds.stopBackgroundMusic();
+    };
+  }, []);
+  
   // Detectar cuando todos están busteados para mostrar re-betting
   useEffect(() => {
     if (!game) return;
@@ -66,10 +87,16 @@ export const GameTable = () => {
     const players = game.players || [];
     const allBusted = players.length > 0 && players.every(p => p.status === 'busted');
     
-    if (allBusted && !showReBetting) {
-      setTimeout(() => {
-        setShowReBetting(true);
-      }, 2000);
+    // Solo mostrar si todos están busteados Y no hay ganador Y no está en estado finished
+    if (allBusted && game.roundState !== 'finished' && !game.players?.some(p => p.status === 'winner')) {
+      if (!showReBetting) {
+        setTimeout(() => {
+          setShowReBetting(true);
+        }, 2000);
+      }
+    } else if (showReBetting && game.roundState === 'in_round' && players.some(p => p.hand.length > 0)) {
+      // Cerrar la modal cuando el juego se resetea y comienza una nueva ronda
+      setShowReBetting(false);
     }
   }, [game, showReBetting]);
   
@@ -95,32 +122,77 @@ export const GameTable = () => {
       return () => clearTimeout(timer);
     }
   }, [game, userId, roomCode]);
+
+  // Detectar cambios de estado del jugador (bust o winner) para sonidos
+  useEffect(() => {
+    if (!game || !userId) return;
+    
+    const currentPlayer = game.players?.find(p => p.id === userId);
+    
+    if (currentPlayer?.status === 'busted') {
+      sounds.playBust();
+    } else if (currentPlayer?.status === 'winner') {
+      sounds.playWin();
+    }
+  }, [game?.players?.find((p: any) => p.id === userId)?.status]);
   
   // Detectar ganador
   useEffect(() => {
-    if (!game || !userId || showWinnerModal) return;
+    if (!game || !userId || showWinnerModal || winnerData) return;
     
     const winner = game.players?.find(p => p.status === 'winner');
     if (winner && game.roundState === 'finished') {
+      const handTotal = winner.hand.reduce((sum, tile) => sum + tile, 0);
+      const wildcardValue = winner.wildcardActive ? game.wildcard.value : 0;
+      const totalScore = handTotal + wildcardValue;
+      
+      // Determinar si es Siglo (99-100) o mayor pinta
+      const isSiglo = totalScore === 99 || totalScore === 100;
+      
+      setWinnerData({
+        name: winner.name,
+        isCurrentPlayer: winner.id === userId,
+        potWon: game.pot || 0,
+        winType: isSiglo ? 'siglo' : 'highest-score',
+        score: totalScore,
+      });
+      
       setTimeout(() => {
-        const handTotal = winner.hand.reduce((sum, tile) => sum + tile, 0);
-        const wildcardValue = winner.wildcardActive ? game.wildcard.value : 0;
-        const totalScore = handTotal + wildcardValue;
-        
-        // Determinar si es Siglo (99-100) o mayor pinta
-        const isSiglo = totalScore === 99 || totalScore === 100;
-        
-        setWinnerData({
-          name: winner.name,
-          isCurrentPlayer: winner.id === userId,
-          potWon: game.pot || 0,
-          winType: isSiglo ? 'siglo' : 'highest-score',
-          score: totalScore,
-        });
         setShowWinnerModal(true);
       }, 1000);
     }
-  }, [game, userId, showWinnerModal]);
+  }, [game, userId, showWinnerModal, winnerData]);
+
+  // Detectar cuando un jugador abandona
+  useEffect(() => {
+    if (!game || !userId) return;
+
+    const currentPlayerCount = game.players?.length || 0;
+
+    // Inicializar el contador en el primer render
+    if (previousPlayerCount === 0) {
+      setPreviousPlayerCount(currentPlayerCount);
+      return;
+    }
+
+    // Si disminuyó el número de jugadores, alguien abandonó
+    if (currentPlayerCount < previousPlayerCount && currentPlayerCount > 0) {
+      console.log('Player left detected! Previous:', previousPlayerCount, 'Current:', currentPlayerCount);
+      
+      // Mostrar notificación
+      setNotification({
+        title: 'Jugador Abandonó',
+        message: 'Un jugador ha abandonado la sala. El juego continúa con los jugadores restantes.',
+        type: 'warning'
+      });
+      
+      // Actualizar el contador
+      setPreviousPlayerCount(currentPlayerCount);
+    } else if (currentPlayerCount !== previousPlayerCount) {
+      // Actualizar sin notificación si aumentó o cambió por otra razón
+      setPreviousPlayerCount(currentPlayerCount);
+    }
+  }, [game?.players?.length]);
 
   const calculateTotal = (hand: number[], includeWildcard: boolean, wildcardValue: number) => {
     const handTotal = hand.reduce((sum, tile) => sum + tile, 0);
@@ -130,8 +202,12 @@ export const GameTable = () => {
   const handleDrawTiles = async () => {
     if (!roomCode || !userId || isProcessing) return;
     
+    // Intentar iniciar música con la interacción del usuario
+    sounds.startBackgroundMusic();
+    
     try {
       setIsProcessing(true);
+      sounds.playDrawTile();
       await drawTile(roomCode, userId);
       // El service maneja automáticamente el status
       // El turno se pasará con el botón "Siguiente turno" o automáticamente si está busted
@@ -149,6 +225,7 @@ export const GameTable = () => {
     try {
       setIsProcessing(true);
       await toggleWildcard(roomCode, userId);
+      sounds.playWildcard();
     } catch (err) {
       console.error('Error al toggle comodín:', err);
       setError('Error al activar comodín. Intenta de nuevo.');
@@ -162,6 +239,7 @@ export const GameTable = () => {
     
     try {
       setIsProcessing(true);
+      sounds.playStand();
       await standPlayer(roomCode, userId);
       await nextTurn(roomCode);
     } catch (err) {
@@ -173,30 +251,38 @@ export const GameTable = () => {
   };
 
   const handlePlaceBet = async (amount: number) => {
-    if (!roomCode || !userId) return;
+    if (!roomCode || !userId || isProcessing) return;
     
     try {
-      // Aquí implementarías la lógica de re-apuesta
-      // Por ahora, simplemente reseteamos el juego con la nueva apuesta
-      await resetGameWithBets(roomCode, amount);
-      setShowReBetting(false);
+      setIsProcessing(true);
+      sounds.playBet();
+      // Colocar la apuesta individual del jugador
+      await placeReBet(roomCode, userId, amount);
+      // La modal se cerrará automáticamente cuando todos hayan apostado y el juego se resetee
     } catch (err) {
       console.error('Error al apostar:', err);
       setError('Error al colocar apuesta. Intenta de nuevo.');
+    } finally {
+      setIsProcessing(false);
     }
   };
   
   const handleNewRound = async () => {
-    if (!roomCode) return;
+    if (!roomCode || isProcessing) return;
     
     try {
-      // Resetear el juego con la misma apuesta base
-      await resetGameWithBets(roomCode, game?.baseBet || 100);
+      setIsProcessing(true);
+      // Primero cerrar la modal
       setShowWinnerModal(false);
       setWinnerData(null);
+      
+      // Resetear el juego con la misma apuesta base
+      await resetGameWithBets(roomCode, game?.baseBet || 100);
     } catch (err) {
       console.error('Error al iniciar nueva ronda:', err);
       setError('Error al iniciar nueva ronda. Intenta de nuevo.');
+    } finally {
+      setIsProcessing(false);
     }
   };
   
@@ -207,9 +293,18 @@ export const GameTable = () => {
   };
   
   const handleLeaveGame = () => {
-    // Confirmar antes de salir
-    const confirmLeave = window.confirm('¿Estás seguro de que deseas abandonar la partida?');
-    if (confirmLeave) {
+    setShowLeaveConfirm(true);
+  };
+
+  const confirmLeaveGame = async () => {
+    if (!roomCode || !userId) return;
+    
+    try {
+      // Primero remover al jugador de la sala en Firestore
+      await leaveGame(roomCode, userId);
+    } catch (err) {
+      console.error('Error al abandonar sala:', err);
+    } finally {
       // Limpiar todo el localStorage relacionado con la partida
       localStorage.removeItem('roomCode');
       localStorage.removeItem('playerName');
@@ -274,8 +369,8 @@ export const GameTable = () => {
         <ReBetting
           playerCoins={playerCoins}
           onPlaceBet={handlePlaceBet}
-          currentHighestBet={game.baseBet}
-          allBetsPlaced={false}
+          currentHighestBet={Math.max(...(game.players?.map(p => p.bet || 0) || [0]))}
+          allBetsPlaced={currentPlayer?.isReady || false}
         />
       )}
       
@@ -334,6 +429,27 @@ export const GameTable = () => {
           canDraw={game.deck.length > 0 && !isProcessing}
         />
       </GameBoard>
+
+      {showLeaveConfirm && (
+        <ConfirmModal
+          title="Abandonar Partida"
+          message="¿Estás seguro de que deseas abandonar la partida? Perderás tu progreso y tu apuesta."
+          type="danger"
+          confirmText="Sí, abandonar"
+          cancelText="Cancelar"
+          onConfirm={confirmLeaveGame}
+          onCancel={() => setShowLeaveConfirm(false)}
+        />
+      )}
+
+      {notification && (
+        <NotificationModal
+          title={notification.title}
+          message={notification.message}
+          type={notification.type}
+          onClose={() => setNotification(null)}
+        />
+      )}
     </motion.div>
   );
 };

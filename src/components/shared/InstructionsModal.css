@@ -1,0 +1,203 @@
+.instructions-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.instructions-modal {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  border: 3px solid #ffd700;
+  border-radius: 24px;
+  max-width: 700px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(255, 215, 0, 0.3);
+}
+
+.instructions-header {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.2) 0%, rgba(255, 215, 0, 0.05) 100%);
+  padding: 32px 32px 24px;
+  border-bottom: 2px solid rgba(255, 215, 0, 0.3);
+  text-align: center;
+}
+
+.instructions-title {
+  font-size: 32px;
+  font-weight: bold;
+  color: #ffd700;
+  margin: 0;
+  text-shadow: 0 2px 10px rgba(255, 215, 0, 0.5);
+}
+
+.instructions-content {
+  padding: 32px;
+}
+
+.instruction-section {
+  margin-bottom: 28px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.instruction-section h3 {
+  font-size: 20px;
+  color: #ffd700;
+  margin: 0 0 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.instruction-section p {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.instruction-section ul {
+  margin: 12px 0 0 0;
+  padding-left: 20px;
+  list-style: none;
+}
+
+.instruction-section li {
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.8;
+  margin-bottom: 8px;
+  position: relative;
+  padding-left: 20px;
+}
+
+.instruction-section li::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  color: #ffd700;
+  font-weight: bold;
+}
+
+.instruction-section.highlight {
+  background: rgba(255, 215, 0, 0.1);
+  border: 2px solid rgba(255, 215, 0, 0.3);
+}
+
+.instruction-tip {
+  background: rgba(72, 219, 251, 0.1);
+  border: 2px solid rgba(72, 219, 251, 0.3);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-top: 24px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.instruction-tip strong {
+  color: #48dbfb;
+}
+
+.instructions-footer {
+  padding: 24px 32px 32px;
+  text-align: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-continue {
+  background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+  color: #1a1a2e;
+  border: none;
+  padding: 16px 48px;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(255, 215, 0, 0.4);
+  width: 100%;
+  max-width: 400px;
+}
+
+.btn-continue:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 215, 0, 0.6);
+}
+
+.btn-continue:active {
+  transform: translateY(0);
+}
+
+/* Scrollbar styling */
+.instructions-modal::-webkit-scrollbar {
+  width: 8px;
+}
+
+.instructions-modal::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.instructions-modal::-webkit-scrollbar-thumb {
+  background: rgba(255, 215, 0, 0.3);
+  border-radius: 4px;
+}
+
+.instructions-modal::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 215, 0, 0.5);
+}
+
+@media (max-width: 768px) {
+  .instructions-modal {
+    max-width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .instructions-header {
+    padding: 24px 20px 20px;
+  }
+
+  .instructions-title {
+    font-size: 24px;
+  }
+
+  .instructions-content {
+    padding: 24px 20px;
+  }
+
+  .instruction-section {
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+
+  .instruction-section h3 {
+    font-size: 18px;
+  }
+
+  .instruction-section p,
+  .instruction-section li {
+    font-size: 14px;
+  }
+
+  .instructions-footer {
+    padding: 20px;
+  }
+
+  .btn-continue {
+    font-size: 16px;
+    padding: 14px 32px;
+  }
+}

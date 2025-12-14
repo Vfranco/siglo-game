@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { pageVariants, pageTransition } from '../../utils/animations';
 import { useAuthContext } from '../../contexts/AuthContext';
+import { useGameSounds } from '../../hooks/useGameSounds';
 import './CoinsSelection.css';
 
 const COIN_OPTIONS = [1000, 2000, 3000, 4000];
@@ -12,6 +13,7 @@ export const CoinsSelection = () => {
   const [playerName, setPlayerName] = useState('');
   const navigate = useNavigate();
   const { user } = useAuthContext();
+  const sounds = useGameSounds();
 
   useEffect(() => {
     const name = localStorage.getItem('playerName');
@@ -23,6 +25,7 @@ export const CoinsSelection = () => {
   }, [navigate, user]);
 
   const handleCoinSelect = (amount: number) => {
+    sounds.playCoinSelect();
     setSelectedCoins(amount);
   };
 

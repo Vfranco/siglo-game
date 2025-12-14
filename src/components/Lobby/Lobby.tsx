@@ -4,9 +4,11 @@ import { motion } from 'framer-motion';
 import { pageVariants, pageTransition } from '../../utils/animations';
 import { useAuthContext } from '../../contexts/AuthContext';
 import { useDocument } from '../../hooks/useFirestore';
-import { createGame, joinGame, setPlayerReady, startGame } from '../../services/gameService';
+import { createGame, joinGame, setPlayerReady, startGame, removePlayer } from '../../services/gameService';
 import { Game } from '../../types';
 import { LobbyTopBar } from './components/LobbyTopBar';
+import { ConfirmModal } from '../shared/ConfirmModal';
+import { NotificationModal } from '../shared/NotificationModal';
 import './Lobby.css';
 
 const MAX_PLAYERS = 6;
@@ -26,6 +28,8 @@ export const Lobby = () => {
   const [error, setError] = useState('');
   const [showJoinInput, setShowJoinInput] = useState(false);
   const [joinCode, setJoinCode] = useState('');
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [notification, setNotification] = useState<{title: string, message: string, type: 'info' | 'warning' | 'error'} | null>(null);
   const navigate = useNavigate();
   const { user } = useAuthContext();
   
@@ -86,12 +90,28 @@ export const Lobby = () => {
     }
   };
   
-  // Navegar automáticamente cuando el juego inicie
+  // Navegar automáticamente cuando el juego inicie (si estás listo)
   useEffect(() => {
     if (game?.roundState === 'in_round') {
-      navigate('/game');
+      // Verificar si el jugador está en la partida
+      const playerInGame = game.players?.some(p => p.id === userId);
+      
+      if (playerInGame) {
+        navigate('/game');
+      } else {
+        // El jugador no está en la partida (fue removido o no se unió a tiempo)
+        setNotification({
+          title: 'Partida Iniciada',
+          message: 'La partida ya comenzó sin ti. Puedes esperar a que termine o iniciar otra sala.',
+          type: 'warning'
+        });
+        // Limpiar roomCode para volver al lobby
+        localStorage.removeItem('roomCode');
+        setRoomCode('');
+        setShowJoinInput(true);
+      }
     }
-  }, [game?.roundState, navigate]);
+  }, [game?.roundState, game?.players, userId, navigate]);
 
   const handleCopyRoomCode = async () => {
     try {
@@ -146,18 +166,30 @@ export const Lobby = () => {
     }
   };
 
-  const handleLogout = () => {
-    const confirmLogout = window.confirm('¿Estás seguro de que deseas cerrar sesión?');
-    if (confirmLogout) {
-      // Limpiar todo el localStorage
-      localStorage.removeItem('roomCode');
-      localStorage.removeItem('playerName');
-      localStorage.removeItem('userId');
-      localStorage.removeItem('playerCoins');
-      localStorage.removeItem('selectedCoins');
-      // Navegar al inicio
-      navigate('/');
+  const handleRemovePlayer = async (playerId: string) => {
+    if (!roomCode || !userId || !isHost) return;
+    
+    try {
+      await removePlayer(roomCode, playerId, userId);
+    } catch (err) {
+      console.error('Error al remover jugador:', err);
+      setError('Error al remover jugador. Intenta de nuevo.');
     }
+  };
+
+  const handleLogout = () => {
+    setShowLogoutConfirm(true);
+  };
+
+  const confirmLogout = () => {
+    // Limpiar todo el localStorage
+    localStorage.removeItem('roomCode');
+    localStorage.removeItem('playerName');
+    localStorage.removeItem('userId');
+    localStorage.removeItem('playerCoins');
+    localStorage.removeItem('selectedCoins');
+    // Navegar al inicio
+    navigate('/');
   };
   
   const allPlayersReady = players.length > 1 && players.every((p) => p.isReady);
@@ -236,6 +268,18 @@ export const Lobby = () => {
             </button>
           </div>
         </div>
+
+        {showLogoutConfirm && (
+          <ConfirmModal
+            title="Cerrar Sesión"
+            message="¿Estás seguro de que deseas cerrar sesión? Perderás tu progreso actual."
+            type="warning"
+            confirmText="Sí, cerrar sesión"
+            cancelText="Cancelar"
+            onConfirm={confirmLogout}
+            onCancel={() => setShowLogoutConfirm(false)}
+          />
+        )}
       </motion.div>
     );
   }
@@ -255,6 +299,18 @@ export const Lobby = () => {
             <h2>⏳ Cargando sala...</h2>
           </div>
         </div>
+
+        {showLogoutConfirm && (
+          <ConfirmModal
+            title="Cerrar Sesión"
+            message="¿Estás seguro de que deseas cerrar sesión? Perderás tu progreso actual."
+            type="warning"
+            confirmText="Sí, cerrar sesión"
+            cancelText="Cancelar"
+            onConfirm={confirmLogout}
+            onCancel={() => setShowLogoutConfirm(false)}
+          />
+        )}
       </motion.div>
     );
   }
@@ -277,6 +333,18 @@ export const Lobby = () => {
             </button>
           </div>
         </div>
+
+        {showLogoutConfirm && (
+          <ConfirmModal
+            title="Cerrar Sesión"
+            message="¿Estás seguro de que deseas cerrar sesión? Perderás tu progreso actual."
+            type="warning"
+            confirmText="Sí, cerrar sesión"
+            cancelText="Cancelar"
+            onConfirm={confirmLogout}
+            onCancel={() => setShowLogoutConfirm(false)}
+          />
+        )}
       </motion.div>
     );
   }
@@ -368,6 +436,15 @@ export const Lobby = () => {
                       <span className="status-badge waiting">Esperando...</span>
                     )}
                   </div>
+                  {isHost && player.id !== userId && player.id !== game?.hostId && (
+                    <button
+                      className="btn-remove-player"
+                      onClick={() => handleRemovePlayer(player.id)}
+                      title="Remover jugador"
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -426,6 +503,27 @@ export const Lobby = () => {
           </div>
         </div>
       </div>
+
+      {showLogoutConfirm && (
+        <ConfirmModal
+          title="Cerrar Sesión"
+          message="¿Estás seguro de que deseas cerrar sesión? Perderás tu progreso actual."
+          type="warning"
+          confirmText="Sí, cerrar sesión"
+          cancelText="Cancelar"
+          onConfirm={confirmLogout}
+          onCancel={() => setShowLogoutConfirm(false)}
+        />
+      )}
+
+      {notification && (
+        <NotificationModal
+          title={notification.title}
+          message={notification.message}
+          type={notification.type}
+          onClose={() => setNotification(null)}
+        />
+      )}
     </motion.div>
   );
 };
