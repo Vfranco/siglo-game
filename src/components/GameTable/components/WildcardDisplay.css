@@ -1,0 +1,74 @@
+.wildcard-display {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
+  border: 3px solid rgba(138, 43, 226, 0.6);
+  border-radius: 16px;
+  padding: 1.5rem;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.wildcard-display.active {
+  border-color: #ffd700;
+  box-shadow: 0 0 30px rgba(255, 215, 0, 0.5);
+}
+
+.wildcard-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #b19cd9;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  margin-bottom: 0.8rem;
+}
+
+.wildcard-card {
+  width: 80px;
+  height: 100px;
+  margin: 0 auto;
+  background: linear-gradient(135deg, #8a2be2 0%, #9370db 100%);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  position: relative;
+}
+
+.wildcard-value {
+  color: #ffffff;
+}
+
+.wildcard-number {
+  font-size: 3rem;
+  font-weight: 900;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.wildcard-hidden {
+  font-size: 3rem;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.wildcard-active-badge {
+  margin-top: 0.8rem;
+  background: #ffd700;
+  color: #1a5f3f;
+  padding: 0.3rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+@media (max-width: 768px) {
+  .wildcard-card {
+    width: 60px;
+    height: 80px;
+  }
+
+  .wildcard-number {
+    font-size: 2rem;
+  }
+}

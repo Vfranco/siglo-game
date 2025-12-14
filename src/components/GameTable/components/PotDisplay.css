@@ -1,0 +1,72 @@
+.pot-display {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
+  border: 3px solid #ffd700;
+  border-radius: 16px;
+  padding: 1.5rem;
+  text-align: center;
+  box-shadow:
+    0 0 30px rgba(255, 215, 0, 0.4),
+    inset 0 0 20px rgba(255, 215, 0, 0.1);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.pot-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #ffd700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  margin-bottom: 0.5rem;
+}
+
+.pot-amount {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.pot-icon {
+  font-size: 2rem;
+}
+
+.pot-value {
+  font-size: 2.5rem;
+  font-weight: 900;
+  color: #ffd700;
+  text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+}
+
+.pot-coins {
+  font-size: 1rem;
+  color: #b8d4c6;
+  font-weight: 500;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 20px rgba(255, 215, 0, 0.3),
+      inset 0 0 20px rgba(255, 215, 0, 0.1);
+  }
+  50% {
+    box-shadow:
+      0 0 40px rgba(255, 215, 0, 0.6),
+      inset 0 0 30px rgba(255, 215, 0, 0.2);
+  }
+}
+
+@media (max-width: 768px) {
+  .pot-display {
+    padding: 1rem;
+  }
+
+  .pot-value {
+    font-size: 2rem;
+  }
+
+  .pot-icon {
+    font-size: 1.5rem;
+  }
+}

@@ -1,0 +1,54 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Función helper para verificar autenticación
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Función helper para verificar si el usuario es el jugador
+    function isPlayer(playerId) {
+      return isAuthenticated() && request.auth.uid == playerId;
+    }
+
+    // Función helper para verificar si el usuario está en la partida
+    function isInGame(gameData) {
+      return isAuthenticated() &&
+             gameData.players != null &&
+             gameData.players.hasAny([request.auth.uid]);
+    }
+
+    // Función helper para verificar si es el host
+    function isHost(gameData) {
+      return isAuthenticated() && request.auth.uid == gameData.hostId;
+    }
+
+    // Reglas para la colección de juegos
+    match /games/{gameId} {
+
+      // Permitir lectura si estás autenticado y en la partida
+      allow read: if isAuthenticated();
+
+      // Permitir crear juego si estás autenticado
+      allow create: if isAuthenticated() &&
+                       request.resource.data.hostId == request.auth.uid &&
+                       request.resource.data.roundState == 'lobby' &&
+                       request.resource.data.baseBet >= 100;
+
+      // Permitir actualizar solo si estás en la partida
+      allow update: if isAuthenticated() &&
+                       isInGame(resource.data);
+
+      // No permitir eliminar juegos directamente
+      allow delete: if false;
+    }
+
+    // Reglas para usuarios (opcional - para futuro)
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isPlayer(userId);
+    }
+  }
+}
